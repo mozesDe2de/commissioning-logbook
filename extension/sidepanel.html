@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Commissioning logbook</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Commissioning logbook</div>
+    <div id="pageStatus" class="pagestatus"></div>
+  </header>
+
+  <section id="unsaved" class="unsaved" hidden></section>
+
+  <section class="sets">
+    <div class="sethead">
+      <h2>Active changesets</h2>
+      <button id="newSetBtn" class="btn small">New changeset</button>
+    </div>
+    <form id="newSetForm" class="newset" hidden>
+      <textarea id="newSetText" rows="2" placeholder="Why are we doing this change? e.g. Lane 14 overshoots by ~10 mm"></textarea>
+      <div class="row">
+        <button class="btn small" type="submit">Create</button>
+        <button class="btn small ghost" type="button" id="newSetCancel">Cancel</button>
+      </div>
+    </form>
+    <div id="activeSets"></div>
+  </section>
+
+  <details class="closed" id="closedBox">
+    <summary>Closed changesets <span id="closedCount" class="count"></span></summary>
+    <div id="closedSets"></div>
+  </details>
+
+  <footer class="tools">
+    <div class="exports">
+      <button id="exportAll" class="btn ghost small">Export all changes (CSV)</button>
+      <button id="exportFinal" class="btn ghost small">Export final values (CSV)</button>
+    </div>
+    <details class="settings">
+      <summary>Settings</summary>
+      <div class="setting">
+        <div class="label">Watched sites</div>
+        <ul id="siteList" class="sites"></ul>
+        <form id="siteForm" class="row">
+          <input id="siteInput" type="text" placeholder="http://10.20.1.15  or  http://*/*">
+          <button class="btn small" type="submit">Add</button>
+        </form>
+      </div>
+      <div class="setting">
+        <div class="label">Shuttle ID from URL</div>
+        <p class="hint">Default: the part after <code>/shuttle/</code>, else a <code>?shuttle=</code> or <code>?id=</code> parameter, else the address. Override with a regular expression; the first group is the ID.</p>
+        <form id="regexForm" class="row">
+          <input id="regexInput" type="text" placeholder="e.g. /robots/([^/]+)">
+          <button class="btn small" type="submit">Save</button>
+        </form>
+      </div>
+      <div class="setting">
+        <div class="label">Ignored fields</div>
+        <ul id="ignoredList" class="sites"></ul>
+      </div>
+      <div class="setting">
+        <div class="label">Backup</div>
+        <div class="row">
+          <button id="backupBtn" class="btn ghost small">Save backup (JSON)</button>
+          <label class="btn ghost small filebtn">Restore backup<input id="restoreInput" type="file" accept=".json,application/json"></label>
+        </div>
+        <button id="resetBtn" class="btn ghost small danger">Clear all changes…</button>
+      </div>
+    </details>
+  </footer>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

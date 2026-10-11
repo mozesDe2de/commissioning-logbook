@@ -1,0 +1,25 @@
+# Python (simulator)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Simulator state (if it writes its shuttle values to a file)
+simulator/*.json
+simulator/*.db
+
+# Browser extension packaging
+*.crx
+*.pem
+*.zip
+
+# Logbook exports and backups made while testing
+*.csv
+*backup*.json
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
