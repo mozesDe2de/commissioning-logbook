@@ -58,7 +58,7 @@ const watched = url => db.settings.sites.some(p => patternToRegex(p)?.test(url))
 
 async function refresh() {
   const [{ db: d }, { live: l = {} }] = await Promise.all([chrome.storage.local.get('db'), chrome.storage.session.get('live')]);
-  db = d || core.emptyDb();
+  db = d ? core.migrate(d) : core.emptyDb();
   live = l;
   render();
 }
@@ -86,7 +86,9 @@ function renderInner() {
   const a = document.activeElement;
   const keep = a && a.dataset && a.dataset.fk ? { fk: a.dataset.fk, value: a.value, s: a.selectionStart, e: a.selectionEnd } : null;
 
+  renderCustSite();
   renderPageStatus();
+  renderSuspect();
   renderUnsaved();
   renderSets();
   renderSettings();
@@ -103,7 +105,9 @@ function renderPageStatus() {
   const sid = core.shuttleIdFromUrl(tab.url, db.settings.idRegex);
   const l = live[tab.id];
   if (watched(tab.url)) {
-    const read = l && l.url === tab.url && l.lastRead ? `read ${when(l.lastRead)}` : 'no parameter fields read yet';
+    const read = !core.currentCustSite(db) ? '<strong>not recording: choose a customer / site</strong>'
+      : l && l.url === tab.url && l.suspect ? '<strong>not recorded yet, see below</strong>'
+      : l && l.url === tab.url && l.lastRead ? `read ${when(l.lastRead)}` : 'no parameter fields read yet';
     box.innerHTML = `<span class="dot on"></span><span>Shuttle <span class="sid">${esc(sid)}</span></span>
       <span>· ${read}</span> <button class="linkish" id="rereadBtn">Re-read page</button>`;
     $('#rereadBtn').onclick = async () => {
@@ -126,6 +130,39 @@ function watchSite(pattern) {
     toast('Watching ' + pattern.replace('/*', '') + '. Reload the shuttle page to start.');
     refreshTab();
   });
+}
+
+function renderCustSite() {
+  const cur = core.currentCustSite(db);
+  const list = Object.values(db.custSites).sort((a, b) => a.name.localeCompare(b.name));
+  const sel = $('#custSiteSelect');
+  if (document.activeElement !== sel) {
+    sel.innerHTML = (cur ? '' : '<option value="">— choose —</option>')
+      + list.map(c => `<option value="${esc(c.id)}" ${cur && c.id === cur.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  }
+  sel.hidden = !list.length;
+  $('#custSiteRenameBtn').hidden = !cur;
+  $('#custSiteBar').classList.toggle('missing', !cur);
+  $('#custSiteHint').textContent = cur ? ''
+    : list.length ? 'Choose where you are working. Shuttle addresses repeat at every customer, so nothing is recorded until you do.'
+    : 'Create the customer / site you are working at, e.g. "Customer X – Ghent DC". Shuttle addresses repeat at every customer, so nothing is recorded until you do.';
+}
+
+function renderSuspect() {
+  const box = $('#suspect');
+  const l = tab && live[tab.id];
+  const s = l && l.url === tab.url && l.suspect;
+  if (!s || s.custSite !== db.settings.currentCustSite) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<p><strong>Different customer / site?</strong> ${s.differing} of ${s.compared} fields on this page differ from what was
+    recorded for shuttle <code>${esc(l.sid)}</code> at <strong>${esc(core.custSiteName(db, s.custSite))}</strong>. Nothing was recorded.</p>
+    <div class="row"><button class="btn small" id="suspectSwitch">Switch customer / site</button>
+    <button class="btn small ghost" id="suspectAccept" title="Log every difference as changed outside this browser">Same site: log as outside changes</button></div>`;
+  $('#suspectSwitch').onclick = () => { const sel = $('#custSiteSelect'); sel.hidden ? $('#custSiteNewBtn').click() : sel.focus(); };
+  $('#suspectAccept').onclick = async () => {
+    const r = await send({ cmd: 'acceptSnapshot', tabId: tab.id });
+    toast(r && r.error ? r.error : `Logged ${r.outside} outside change(s)`);
+  };
 }
 
 function renderUnsaved() {
@@ -197,12 +234,19 @@ function card(cs, { target, readOnly, csList }) {
 }
 
 function renderSets() {
-  const active = core.activeChangesets(db);
-  const target = core.currentTarget(db);
-  $('#activeSets').innerHTML = active.length
-    ? active.map(cs => card(cs, { target: target && cs.id === target.id, readOnly: false, csList: active })).join('')
-    : `<div class="empty">No active changesets. Create one first, or just change parameters: the first save creates one with the question <em>${esc(core.DEFAULT_REASON)}</em></div>`;
-  const closed = Object.values(db.changesets).filter(c => c.status === 'closed').sort((a, b) => b.closedAt - a.closedAt);
+  const cur = core.currentCustSite(db);
+  const site = cur ? cur.id : null;
+  $('#newSetBtn').hidden = !cur;
+  const active = cur ? core.activeChangesets(db, site) : [];
+  const target = cur ? core.currentTarget(db, site) : null;
+  const elsewhere = Object.values(db.changesets).filter(c => c.status === 'active' && c.custSite !== site).length;
+  const other = elsewhere ? `<div class="hint">${elsewhere} active changeset(s) at other customers / sites.</div>` : '';
+  $('#activeSets').innerHTML = !cur
+    ? `<div class="empty">Choose a customer / site above to see its changesets.</div>${other}`
+    : (active.length
+      ? active.map(cs => card(cs, { target: target && cs.id === target.id, readOnly: false, csList: active })).join('')
+      : `<div class="empty">No active changesets at ${esc(cur.name)}. Create one first, or just change parameters: the first save creates one with the question <em>${esc(core.DEFAULT_REASON)}</em></div>`) + other;
+  const closed = Object.values(db.changesets).filter(c => c.status === 'closed' && c.custSite === site).sort((a, b) => b.closedAt - a.closedAt);
   $('#closedCount').textContent = closed.length ? `(${closed.length})` : '';
   $('#closedSets').innerHTML = closed.map(cs => card(cs, { target: false, readOnly: true, csList: [] })).join('')
     || '<div class="empty">Nothing closed yet.</div>';
@@ -296,6 +340,35 @@ document.addEventListener('click', async e => {
     case 'removeSite': await send({ cmd: 'removeSite', pattern: el.dataset.pattern }); break;
   }
 });
+
+// customer / site
+let siteFormMode = 'new';
+function openSiteForm(mode) {
+  siteFormMode = mode;
+  const cur = core.currentCustSite(db);
+  $('#custSiteForm').hidden = false;
+  $('#custSiteSubmit').textContent = mode === 'rename' ? 'Rename' : 'Create';
+  $('#custSiteInput').value = mode === 'rename' && cur ? cur.name : '';
+  $('#custSiteInput').focus();
+  $('#custSiteInput').select();
+}
+$('#custSiteNewBtn').onclick = () => openSiteForm('new');
+$('#custSiteRenameBtn').onclick = () => openSiteForm('rename');
+$('#custSiteCancel').onclick = () => { $('#custSiteForm').hidden = true; };
+$('#custSiteForm').onsubmit = async e => {
+  e.preventDefault();
+  const name = $('#custSiteInput').value.trim();
+  if (!name) return;
+  if (siteFormMode === 'rename') await send({ cmd: 'renameCustSite', id: db.settings.currentCustSite, name });
+  else { await send({ cmd: 'createCustSite', name, tabId: tab && tab.id }); toast(`Working at ${name}`); }
+  $('#custSiteForm').hidden = true;
+};
+$('#custSiteSelect').onchange = async e => {
+  if (!e.target.value) return;
+  await send({ cmd: 'selectCustSite', id: e.target.value, tabId: tab && tab.id });
+  toast(`Working at ${core.custSiteName(db, e.target.value)}`);
+  e.target.blur();
+};
 
 $('#newSetBtn').onclick = () => { $('#newSetForm').hidden = false; $('#newSetText').focus(); };
 $('#newSetCancel').onclick = () => { $('#newSetForm').hidden = true; $('#newSetText').value = ''; };

@@ -4,10 +4,19 @@ Simulated pallet-shuttle service pages, for testing the Commissioning Logbook ad
 
 The parameter set is a simplified, educated guess based on public Atlas figures.
 
-Run:      python shuttle_sim.py                 -> http://localhost:8080
-Options:  python shuttle_sim.py --port 9000
+Like on a real site, every shuttle has its own address and the same addresses come back at
+every customer / site. Here each shuttle gets its own port on this PC:
+
+    control page   http://localhost:8080      (fleet overview and test switches)
+    SH-01 … SH-06  http://localhost:8081 … http://localhost:8086
+
+Run:      python shuttle_sim.py                       -> http://localhost:8080
+Options:  python shuttle_sim.py --port 9000           (shuttles on 9001 … 9006)
+          python shuttle_sim.py --customer B          (start at customer / site B)
+Switch customer / site (same addresses, different shuttles and values):
+          python shuttle_sim.py customer B            (or use the control page)
 Change a parameter "outside the browser" (like an RF remote or remote service would):
-          python shuttle_sim.py set SH-01 accel 0.6
+          python shuttle_sim.py set SH-01 accel 0.6   (at the current customer / site)
 Reset everything to factory defaults:
           python shuttle_sim.py reset
 
@@ -30,6 +39,7 @@ LOCK = threading.Lock()
 
 SHUTTLE_IDS = ["SH-01", "SH-02", "SH-03", "SH-04", "SH-05", "SH-06"]
 FIRMWARE = "MOC-sim 4.2.7"
+BASE_PORT = 8080  # control page; shuttle n listens on BASE_PORT + n (set from --port)
 
 # ---------------------------------------------------------------------------
 # Parameter catalogue (guessed + simplified)
@@ -81,29 +91,59 @@ PBYV2 = {p["v2"][0]: p for p in PARAMS}
 
 
 # ---------------------------------------------------------------------------
+# Customers / sites
+# Both sites use the same shuttle addresses, but their shuttles are set up differently,
+# which is exactly what the add-on must not mix up.
+# ---------------------------------------------------------------------------
+CUSTOMERS = {
+    "A": dict(name="Customer A – Ghent DC", overrides={}),
+    "B": dict(name="Customer B – Liège cold store", overrides=dict(
+        max_speed_loaded=0.6, max_speed_empty=0.9, accel=0.35, creep_speed=0.08,
+        pallet_type="INDU 1200x1000", lift_time=3.0, settle_delay=500, pallet_gap=100,
+        low_batt_warn=30, return_charge=20, inlane_charging=True, cold_store_mode=True,
+        obstacle_stop=400, manual_speed_cap=0.25, overload_pct=110,
+        rf_band="915", heartbeat_ms=3000, wms_host="10.40.0.21", wms_port=5021,
+    )),
+}
+
+
+# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
-def factory_state():
+def factory_shuttles(cust):
     shuttles = {}
     for i, sid in enumerate(SHUTTLE_IDS):
         active = {p["key"]: p["default"] for p in PARAMS}
-        # a little site-specific variation so shuttles are not identical
+        active.update(CUSTOMERS[cust]["overrides"])
+        # a little variation so shuttles on one site are not identical
         if i % 2 == 1:
-            active["accel"] = 0.45
-        if i == 4:
+            active["accel"] = round(active["accel"] - 0.05, 3)
+        if i == 4 and cust == "A":
             active["pallet_type"] = "INDU 1200x1000"
         shuttles[sid] = {"active": active, "pending": {}, "cycles": random.randint(12000, 48000)}
-    return {"ui_version": 1, "shuttles": shuttles}
+    return shuttles
+
+
+def factory_state(customer="A"):
+    return {"customer": customer, "ui_version": 1,
+            "customers": {c: {"shuttles": factory_shuttles(c)} for c in CUSTOMERS}}
 
 
 def load_state():
     with LOCK:
-        if not os.path.exists(STATE_FILE):
-            st = factory_state()
-            _write(st)
-            return st
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                st = json.load(f)
+            if "customers" in st and st.get("customer") in CUSTOMERS:
+                return st
+        st = factory_state()  # first run, or a state file from the single-address version
+        _write(st)
+        return st
+
+
+def fleet(st):
+    """The shuttles of the customer / site the simulator currently is."""
+    return st["customers"][st["customer"]]["shuttles"]
 
 
 def _write(st):
@@ -116,6 +156,15 @@ def _write(st):
 def save_state(st):
     with LOCK:
         _write(st)
+
+
+def shuttle_url(sid, tab=None):
+    port = BASE_PORT + SHUTTLE_IDS.index(sid) + 1
+    return f"http://localhost:{port}/" + (f"?tab={tab}" if tab else "")
+
+
+def control_url():
+    return f"http://localhost:{BASE_PORT}/"
 
 
 def coerce(p, raw):
@@ -150,7 +199,7 @@ def fmt(p, v):
 def apply_change(st, sid, key, raw):
     """Apply one parameter value; returns a note string or None."""
     p = PBYKEY[key]
-    sh = st["shuttles"][sid]
+    sh = fleet(st)[sid]
     v = coerce(p, raw)
     if v is None:
         return f"{p['label']}: rejected (not a number)"
@@ -216,26 +265,39 @@ def page(title, body):
 def fleet_page(st, msg=""):
     rows = []
     for sid in SHUTTLE_IDS:
-        sh = st["shuttles"][sid]
+        sh = fleet(st)[sid]
         pend = len(sh["pending"])
-        rows.append(f"""<tr><td><a href="/shuttle/{sid}/config?tab=travel">{sid}</a></td>
+        url = shuttle_url(sid, "travel")
+        rows.append(f"""<tr><td><a href="{url}">{sid}</a></td><td><code>{html.escape(shuttle_url(sid))}</code></td>
 <td>{html.escape(str(sh['active']['pallet_type']))}</td>
 <td>{fmt(PBYKEY['accel'], sh['active']['accel'])} m/s²</td>
 <td>{'<span class="pending">' + str(pend) + ' pending restart</span>' if pend else '—'}</td>
 <td><form class="inline" method="post" action="/fleet/remote-change"><input type="hidden" name="sid" value="{sid}">
 <button class="btn sec" type="submit" title="Changes one random parameter without using this web page">Simulate RF-remote change</button></form></td></tr>""")
     uiv = st.get("ui_version", 1)
-    body = f"""<header><strong>Shuttle fleet</strong><span class="sim">Simulator, not a  product</span></header><main>
+    cur = st["customer"]
+    cust_buttons = " ".join(
+        f'<button class="btn{"" if c == cur else " sec"}" type="submit" name="customer" value="{c}" {"disabled" if c == cur else ""}>{html.escape(d["name"])}</button>'
+        for c, d in CUSTOMERS.items())
+    ui_buttons = " ".join(
+        f'<button class="btn{"" if v == uiv else " sec"}" type="submit" name="ui" value="{v}" {"disabled" if v == uiv else ""}>UI version {v}</button>'
+        for v in (1, 2))
+    # data-logbook-ignore: the add-on does not treat this control page as a shuttle
+    body = f"""<header><strong>Shuttle fleet</strong><span>at <b>{html.escape(CUSTOMERS[cur]['name'])}</b></span>
+<span class="sim">Simulator, not a  product</span></header><main data-logbook-ignore>
 {f'<div class="msg">{html.escape(msg)}</div>' if msg else ''}
-<div class="card"><table class="fleet"><thead><tr><th>Shuttle</th><th>Pallet type</th><th>Acceleration</th><th>Restart</th><th></th></tr></thead>
+<div class="card"><table class="fleet"><thead><tr><th>Shuttle</th><th>Address</th><th>Pallet type</th><th>Acceleration</th><th>Restart</th><th></th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>
+<div class="card"><strong>Customer / site</strong>
+<p class="hint">Every customer / site uses the same shuttle addresses, but they are different shuttles with different settings.
+Switching here is like driving to the next customer: the addresses above stay the same, what answers on them changes.</p>
+<form method="post" action="/fleet/customer">{cust_buttons}</form></div>
 <div class="card"><strong>Test switches</strong>
 <p class="hint">UI version 2 renames every field and changes the page layout, to test that the add-on survives a redesigned device page.</p>
-<form method="post" action="/fleet/ui"><label><input type="radio" name="ui" value="1" {'checked' if uiv == 1 else ''}> UI version 1</label>
-&nbsp; <label><input type="radio" name="ui" value="2" {'checked' if uiv == 2 else ''}> UI version 2</label>
-&nbsp; <button class="btn sec" type="submit">Switch</button></form>
-<form method="post" action="/fleet/reset" style="margin-top:12px"><button class="btn sec" type="submit">Reset all shuttles to factory defaults</button></form>
-<p class="hint">From a terminal: <code>python shuttle_sim.py set SH-01 accel 0.6</code> changes a value outside the browser.</p></div>
+<form method="post" action="/fleet/ui">{ui_buttons}</form>
+<form method="post" action="/fleet/reset" style="margin-top:12px"><button class="btn sec" type="submit">Reset all customers / sites to factory defaults</button></form>
+<p class="hint">From a terminal: <code>python shuttle_sim.py set SH-01 accel 0.6</code> changes a value outside the browser,
+<code>python shuttle_sim.py customer B</code> switches customer / site.</p></div>
 </main>"""
     return page("Shuttle fleet", body)
 
@@ -255,7 +317,7 @@ def field_html(p, value, ui):
 
 
 def config_page(st, sid, tab, msg="", ok=""):
-    sh = st["shuttles"][sid]
+    sh = fleet(st)[sid]
     ui = st.get("ui_version", 1)
     act = sh["active"]
     batt = random.randint(38, 97)
@@ -264,7 +326,7 @@ def config_page(st, sid, tab, msg="", ok=""):
 <div>Status<b><span class="led" style="background:{led_color}"></span>{led_txt}</b></div>
 <div>Battery<b>{batt} %</b></div><div>Position in lane<b>{random.randint(0, 24000)} mm</b></div>
 <div>Cycles<b>{sh['cycles'] + random.randint(0, 40):,}</b></div><div>Firmware<b>{FIRMWARE}</b></div></div>"""
-    tabs = "".join(f'<a class="{"on" if t == tab else ""}" href="/shuttle/{sid}/config?tab={t}">{lbl}</a>' for t, lbl in TABS)
+    tabs = "".join(f'<a class="{"on" if t == tab else ""}" href="/?tab={t}">{lbl}</a>' for t, lbl in TABS)
     params = [p for p in PARAMS if p["tab"] == tab]
 
     def extras(p):
@@ -288,16 +350,16 @@ def config_page(st, sid, tab, msg="", ok=""):
 <div>{field_html(p, act[p['key']], ui)} <span class="unit">{html.escape(p['unit'])}</span>{extras(p)}</div></div>""" for p in params)
         form_inner = f'<div class="grid2">{rows}</div>'
 
-    body = f"""<header><a href="/">Fleet</a><strong>Shuttle {sid}</strong><span class="hint">Configuration · UI v{ui}</span>
+    body = f"""<header><a href="{control_url()}">Fleet</a><strong>Shuttle {sid}</strong><span class="hint">Configuration · UI v{ui}</span>
 <span class="sim">Simulator, not a  product</span></header><main>
 {f'<div class="msg">{html.escape(msg)}</div>' if msg else ''}{f'<div class="msg ok">{html.escape(ok)}</div>' if ok else ''}
 {tele}
 <nav class="tabs">{tabs}</nav>
 <div class="card" style="border-top-left-radius:0">
-<form method="post" action="/shuttle/{sid}/config?tab={tab}">{form_inner}
+<form method="post" action="/?tab={tab}">{form_inner}
 <p style="margin-top:16px;display:flex;gap:10px"><button class="btn" type="submit">Save to shuttle</button>
-<a class="btn sec" href="/shuttle/{sid}/config?tab={tab}" style="text-decoration:none">Discard</a></p></form>
-<form method="post" action="/shuttle/{sid}/restart?tab={tab}"><button class="btn sec" type="submit">Restart shuttle</button>
+<a class="btn sec" href="/?tab={tab}" style="text-decoration:none">Discard</a></p></form>
+<form method="post" action="/restart?tab={tab}"><button class="btn sec" type="submit">Restart shuttle</button>
 <span class="hint">Applies parameters that wait for a restart.</span></form></div></main>"""
     return page(f"{sid} configuration", body)
 
@@ -338,44 +400,50 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u, parts, q = self.parse_path()
         st = load_state()
-        if not parts:
-            return self.send_html(200, fleet_page(st, q.get("msg", "")))
-        if len(parts) == 3 and parts[0] == "shuttle" and parts[2] == "config" and parts[1] in st["shuttles"]:
+        sid = self.server.shuttle_id
+        if sid is None:  # control page
+            if not parts:
+                return self.send_html(200, fleet_page(st, q.get("msg", "")))
+        elif not parts:  # a shuttle: its configuration is the start page
             tab = q.get("tab", "travel")
             if tab not in dict(TABS):
                 tab = "travel"
-            return self.send_html(200, config_page(st, parts[1], tab, q.get("msg", ""), q.get("ok", "")))
-        if len(parts) == 2 and parts[0] == "shuttle" and parts[1] in st["shuttles"]:
-            return self.redirect(f"/shuttle/{parts[1]}/config?tab=travel")
-        self.send_html(404, page("Not found", "<main><p>Not found. <a href='/'>Fleet</a></p></main>"))
+            return self.send_html(200, config_page(st, sid, tab, q.get("msg", ""), q.get("ok", "")))
+        self.send_html(404, page("Not found", f"<main><p>Not found. <a href='{control_url()}'>Fleet</a></p></main>"))
 
     def do_POST(self):
         from urllib.parse import quote
         u, parts, q = self.parse_path()
         form = self.read_form()
         st = load_state()
-        if parts == ["fleet", "ui"]:
-            st["ui_version"] = 2 if form.get("ui") == "2" else 1
-            save_state(st)
-            return self.redirect("/?msg=" + quote(f"Device pages now use UI version {st['ui_version']}"))
-        if parts == ["fleet", "reset"]:
-            save_state(factory_state())
-            return self.redirect("/?msg=" + quote("All shuttles reset to factory defaults"))
-        if parts == ["fleet", "remote-change"] and form.get("sid") in st["shuttles"]:
-            msg = remote_change(st, form["sid"])
-            save_state(st)
-            return self.redirect("/?msg=" + quote(msg))
-        if len(parts) == 3 and parts[0] == "shuttle" and parts[1] in st["shuttles"]:
-            sid, tab = parts[1], q.get("tab", "travel")
-            if parts[2] == "restart":
-                sh = st["shuttles"][sid]
+        sid = self.server.shuttle_id
+        if sid is None:
+            if parts == ["fleet", "ui"]:
+                st["ui_version"] = 2 if form.get("ui") == "2" else 1
+                save_state(st)
+                return self.redirect("/?msg=" + quote(f"Device pages now use UI version {st['ui_version']}"))
+            if parts == ["fleet", "customer"] and form.get("customer") in CUSTOMERS:
+                st["customer"] = form["customer"]
+                save_state(st)
+                return self.redirect("/?msg=" + quote(f"Now at {CUSTOMERS[st['customer']]['name']}: same addresses, other shuttles"))
+            if parts == ["fleet", "reset"]:
+                save_state(factory_state(st["customer"]))
+                return self.redirect("/?msg=" + quote("All customers / sites reset to factory defaults"))
+            if parts == ["fleet", "remote-change"] and form.get("sid") in SHUTTLE_IDS:
+                msg = remote_change(st, form["sid"])
+                save_state(st)
+                return self.redirect("/?msg=" + quote(msg))
+        else:
+            tab = q.get("tab", "travel")
+            if parts == ["restart"]:
+                sh = fleet(st)[sid]
                 n = len(sh["pending"])
                 sh["active"].update(sh["pending"])
                 sh["pending"] = {}
                 save_state(st)
                 time.sleep(0.6)
-                return self.redirect(f"/shuttle/{sid}/config?tab={tab}&ok=" + quote(f"Shuttle restarted, {n} pending value(s) applied"))
-            if parts[2] == "config":
+                return self.redirect(f"/?tab={tab}&ok=" + quote(f"Shuttle restarted, {n} pending value(s) applied"))
+            if not parts:
                 ui = st.get("ui_version", 1)
                 notes = []
                 for p in [p for p in PARAMS if p["tab"] == tab]:
@@ -391,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                         notes.append(note)
                 save_state(st)
                 time.sleep(0.3)  # a real controller takes a moment
-                url = f"/shuttle/{sid}/config?tab={tab}&ok=" + quote("Saved")
+                url = f"/?tab={tab}&ok=" + quote("Saved")
                 if notes:
                     url += "&msg=" + quote(" · ".join(notes))
                 return self.redirect(url)
@@ -399,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def remote_change(st, sid):
-    sh = st["shuttles"][sid]
+    sh = fleet(st)[sid]
     candidates = [p for p in PARAMS if p["kind"] in ("num", "int") and not p.get("restart")]
     p = random.choice(candidates)
     cur = sh["active"][p["key"]]
@@ -412,23 +480,42 @@ def remote_change(st, sid):
     return f"{sid}: {p['label']} changed from {fmt(p, cur)} to {fmt(p, v)} via the RF remote (not via the web page)"
 
 
+def serve(host, shuttle_id, port):
+    srv = ThreadingHTTPServer((host, port), Handler)
+    srv.shuttle_id = shuttle_id  # None = control page
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def main():
+    global BASE_PORT
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", nargs="?", default="serve", choices=["serve", "set", "reset"])
+    ap.add_argument("cmd", nargs="?", default="serve", choices=["serve", "set", "reset", "customer"])
     ap.add_argument("args", nargs="*")
-    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--port", type=int, default=8080, help="control page port; shuttles use the next six ports")
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--customer", choices=list(CUSTOMERS), help="customer / site to start at")
     a = ap.parse_args()
+    BASE_PORT = a.port
     if a.cmd == "reset":
         save_state(factory_state())
-        print("All shuttles reset to factory defaults.")
+        print("All customers / sites reset to factory defaults.")
+        return
+    if a.cmd == "customer":
+        if len(a.args) != 1 or a.args[0] not in CUSTOMERS:
+            sys.exit("usage: shuttle_sim.py customer <" + "|".join(CUSTOMERS) + ">\n"
+                     + "\n".join(f"  {c}  {d['name']}" for c, d in CUSTOMERS.items()))
+        st = load_state()
+        st["customer"] = a.args[0]
+        save_state(st)
+        print(f"Now at {CUSTOMERS[a.args[0]]['name']} (same addresses, other shuttles). Reload the shuttle pages.")
         return
     if a.cmd == "set":
         if len(a.args) != 3:
             sys.exit("usage: shuttle_sim.py set <SHUTTLE-ID> <parameter> <value>\nparameters: " + ", ".join(PBYKEY))
         sid, key, val = a.args
         st = load_state()
-        if sid not in st["shuttles"]:
+        if sid not in SHUTTLE_IDS:
             sys.exit(f"unknown shuttle {sid}; known: {', '.join(SHUTTLE_IDS)}")
         if key not in PBYKEY:
             sys.exit(f"unknown parameter {key}; known: {', '.join(PBYKEY)}")
@@ -436,16 +523,26 @@ def main():
         v = coerce(p, val)
         if v is None:
             sys.exit("value rejected")
-        st["shuttles"][sid]["active"][key] = v
+        fleet(st)[sid]["active"][key] = v
         save_state(st)
-        print(f"{sid}: {p['label']} = {fmt(p, v)} (changed outside the browser)")
+        print(f"{CUSTOMERS[st['customer']]['name']}, {sid}: {p['label']} = {fmt(p, v)} (changed outside the browser)")
         return
-    load_state()
-    srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    print(f"Shuttle simulator running at http://localhost:{a.port}  (Ctrl+C to stop)")
+    st = load_state()
+    if a.customer:
+        st["customer"] = a.customer
+        save_state(st)
+    servers = [serve(a.host, None, BASE_PORT)]
+    servers += [serve(a.host, sid, BASE_PORT + i + 1) for i, sid in enumerate(SHUTTLE_IDS)]
+    print(f"Shuttle simulator at {CUSTOMERS[st['customer']]['name']}  (Ctrl+C to stop)")
+    print(f"  control page   {control_url()}")
+    for sid in SHUTTLE_IDS:
+        print(f"  {sid}          {shuttle_url(sid)}")
     try:
-        srv.serve_forever()
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
+        for srv in servers:
+            srv.shutdown()
         print("\nstopped")
 
 

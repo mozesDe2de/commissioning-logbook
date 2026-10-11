@@ -111,3 +111,15 @@ textarea { width: 100%; resize: vertical; }
 .filebtn { position: relative; overflow: hidden; }
 .filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .toast { position: fixed; left: 12px; right: 12px; bottom: 12px; background: var(--ink); color: var(--bg); padding: 8px 10px; border-radius: var(--radius); font-size: 12px; z-index: 5; }
+
+/* customer / site */
+.custsite { margin: 10px 12px 0; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.custsite .label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 4px; }
+.custsite select { flex: 1; min-width: 0; font-weight: 600; }
+.custsite form { margin-top: 6px; }
+.custsite .hint:empty { display: none; }
+.custsite.missing { border: 1px solid var(--warn); background: var(--warn-bg); }
+.custsite.missing .hint { color: var(--warn); }
+.suspect { margin: 10px 12px 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); background: var(--warn-bg); color: var(--warn); }
+.suspect p { margin: 0 0 6px; }
+.suspect .row { gap: 8px; }

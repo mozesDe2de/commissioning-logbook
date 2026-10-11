@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Commissioning Logbook",
   "short_name": "Logbook",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Records parameter changes made on shuttle configuration pages and groups them into changesets with the reason for the change.",
   "minimum_chrome_version": "116",
   "action": {

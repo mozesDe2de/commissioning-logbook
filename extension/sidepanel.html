@@ -11,6 +11,23 @@
     <div id="pageStatus" class="pagestatus"></div>
   </header>
 
+  <section class="custsite" id="custSiteBar">
+    <label class="label" for="custSiteSelect">Customer / site</label>
+    <div class="row">
+      <select id="custSiteSelect" aria-label="Customer / site you are working at"></select>
+      <button id="custSiteNewBtn" class="btn small ghost" type="button">New…</button>
+      <button id="custSiteRenameBtn" class="btn small ghost" type="button">Rename</button>
+    </div>
+    <form id="custSiteForm" class="row" hidden>
+      <input id="custSiteInput" type="text" placeholder="e.g. Customer X – Ghent DC">
+      <button class="btn small" type="submit" id="custSiteSubmit">Create</button>
+      <button class="btn small ghost" type="button" id="custSiteCancel">Cancel</button>
+    </form>
+    <p id="custSiteHint" class="hint"></p>
+  </section>
+
+  <section id="suspect" class="suspect" hidden></section>
+
   <section id="unsaved" class="unsaved" hidden></section>
 
   <section class="sets">
@@ -50,7 +67,7 @@
       </div>
       <div class="setting">
         <div class="label">Shuttle ID from URL</div>
-        <p class="hint">Default: the part after <code>/shuttle/</code>, else a <code>?shuttle=</code> or <code>?id=</code> parameter, else the address. Override with a regular expression; the first group is the ID.</p>
+        <p class="hint">Default: the part after <code>/shuttle/</code>, else a <code>?shuttle=</code> or <code>?id=</code> parameter, else the address. The ID only needs to be unique within one customer / site. Override with a regular expression; the first group is the ID.</p>
         <form id="regexForm" class="row">
           <input id="regexInput" type="text" placeholder="e.g. /robots/([^/]+)">
           <button class="btn small" type="submit">Save</button>
