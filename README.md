@@ -86,7 +86,7 @@ field name. Click a parameter name in the sidebar to correct it; the correction 
 else the address (one shuttle per IP, the usual case). The ID only has to be unique within one customer / site.
 Override with a regular expression under *Settings*.
 
-**Read-only.** The add-on never writes to, fills in or submits the shuttle page.
+**Read-only.** The add-on never writes to, fills in or submits the shuttle page.  The add-on makes no network requests; all data stays in the browser.
 
 **Closing.** *Solved* or *Not solved*, with an optional result note.
 
