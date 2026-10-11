@@ -64,7 +64,7 @@ field name. Click a parameter name in the sidebar to correct it; the correction 
 **Shuttle ID.** Taken from the URL: the part after `/shuttle/`, else a `?shuttle=` or `?id=` parameter,
 else the address (one shuttle per IP). Override with a regular expression under *Settings*.
 
-**Read-only.** The add-on never writes to, fills in or submits the shuttle page.
+**Read-only.** The add-on never writes to, fills in or submits the shuttle page.  The add-on makes no network requests; all data stays in the browser.
 
 **Closing.** *Solved* or *Not solved*, with an optional result note.
 
