@@ -8,6 +8,7 @@ without touching a real shuttle.
 ```
 simulator/shuttle_sim.py   simulated shuttle pages (Python 3, standard library only)
 extension/                 the browser add-on (load unpacked)
+docs/background.md         why it is built this way, decisions so far, next steps
 ```
 
 ## 1. Start the simulator
